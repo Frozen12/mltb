@@ -1,5 +1,5 @@
 from logging import FileHandler, StreamHandler, INFO, basicConfig, error as log_error, info as log_info
-from os import path as ospath, environ
+from os import path as ospath, environ, remove
 from subprocess import run as srun
 from requests import get as rget
 from dotenv import load_dotenv, dotenv_values
@@ -9,6 +9,9 @@ import requests
 if ospath.exists('log.txt'):
     with open('log.txt', 'r+') as f:
         f.truncate(0)
+
+if ospath.exists('rlog.txt'):
+    remove('rlog.txt')
 
 basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[FileHandler('log.txt'), StreamHandler()],
