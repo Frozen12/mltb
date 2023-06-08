@@ -3,16 +3,18 @@ from re import match as re_match
 from time import time
 from html import escape
 from psutil import virtual_memory, cpu_percent, disk_usage
-from requests import head as rhead
-from urllib.request import urlopen
 from asyncio import create_subprocess_exec, create_subprocess_shell, run_coroutine_threadsafe, sleep
 from asyncio.subprocess import PIPE
 from functools import partial, wraps
 from concurrent.futures import ThreadPoolExecutor
+from aiohttp import ClientSession
 
 from bot import download_dict, download_dict_lock, botStartTime, user_data, config_dict, bot_loop
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.button_build import ButtonMaker
+from bot.helper.ext_utils.telegraph_helper import telegraph
+
+THREADPOOL = ThreadPoolExecutor(max_workers=1000)
 
 MAGNET_REGEX = r'magnet:\?xt=urn:(btih|btmh):[a-zA-Z0-9]*\s*'
 
@@ -91,6 +93,15 @@ def bt_selection_buttons(id_):
     return buttons.build_menu(2)
 
 
+async def get_telegraph_list(telegraph_content):
+    path = [(await telegraph.create_page(title='Mirror-Leech-Bot Drive Search', content=content))["path"] for content in telegraph_content]
+    if len(path) > 1:
+        await telegraph.edit_telegraph(path, telegraph_content)
+    buttons = ButtonMaker()
+    buttons.ubutton("🔎 VIEW", f"https://telegra.ph/{path[0]}")
+    return buttons.build_menu(1)
+
+
 def get_progress_bar_string(pct):
     pct = float(pct.strip('%'))
     p = min(max(pct, 0), 100)
@@ -106,7 +117,7 @@ def get_readable_message():
     STATUS_LIMIT = config_dict['STATUS_LIMIT']
     tasks = len(download_dict)
     globals()['PAGES'] = (tasks + STATUS_LIMIT - 1) // STATUS_LIMIT
-    if PAGE_NO > PAGES:
+    if PAGE_NO > PAGES and PAGES != 0:
         globals()['STATUS_START'] = STATUS_LIMIT * (PAGES - 1)
         globals()['PAGE_NO'] = PAGES
     for download in list(download_dict.values())[STATUS_START:STATUS_LIMIT+STATUS_START]:
@@ -212,6 +223,10 @@ def is_gdrive_link(url):
     return "drive.google.com" in url
 
 
+def is_telegram_link(url):
+    return url.startswith(('https://t.me/', 'tg://openmessage?user_id='))
+
+
 def is_share_link(url):
     return bool(re_match(r'https?:\/\/.+\.gdtot\.\S+|https?:\/\/(filepress|filebee|appdrive|gdflix)\.\S+', url))
 
@@ -228,18 +243,10 @@ def get_mega_link_type(url):
     return "folder" if "folder" in url or "/#F!" in url else "file"
 
 
-def get_content_type(link):
-    try:
-        res = rhead(link, allow_redirects=True, timeout=5,
-                    headers={'user-agent': 'Wget/1.12'})
-        content_type = res.headers.get('content-type')
-    except:
-        try:
-            res = urlopen(link, timeout=5)
-            content_type = res.info().get_content_type()
-        except:
-            content_type = None
-    return content_type
+async def get_content_type(url):
+    async with ClientSession(trust_env=True) as session:
+        async with session.get(url) as response:
+            return response.headers.get('Content-Type')
 
 
 def update_user_ldata(id_, key, value):
@@ -267,9 +274,8 @@ def new_task(func):
 
 async def sync_to_async(func, *args, wait=True, **kwargs):
     pfunc = partial(func, *args, **kwargs)
-    with ThreadPoolExecutor() as pool:
-        future = bot_loop.run_in_executor(pool, pfunc)
-        return await future if wait else future
+    future = bot_loop.run_in_executor(THREADPOOL, pfunc)
+    return await future if wait else future
 
 
 def async_to_sync(func, *args, wait=True, **kwargs):

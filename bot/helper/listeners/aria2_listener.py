@@ -7,7 +7,7 @@ from bot import aria2, download_dict_lock, download_dict, LOGGER, config_dict
 from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
 from bot.helper.mirror_utils.status_utils.aria2_status import Aria2Status
 from bot.helper.ext_utils.fs_utils import get_base_name, clean_unwanted
-from bot.helper.ext_utils.bot_utils import getDownloadByGid, new_thread, bt_selection_buttons, sync_to_async
+from bot.helper.ext_utils.bot_utils import getDownloadByGid, new_thread, bt_selection_buttons, sync_to_async, get_telegraph_list
 from bot.helper.telegram_helper.message_utils import sendMessage, deleteMessage, update_all_messages
 
 
@@ -47,18 +47,19 @@ async def __onDownloadStarted(api, gid):
                 download = download.live
             LOGGER.info('Checking File/Folder if already in Drive...')
             name = download.name
-            if listener.isZip:
+            if listener.compress is not None:
                 name = f"{name}.zip"
-            elif listener.extract:
+            elif listener.extract is not None:
                 try:
                     name = get_base_name(name)
                 except:
                     name = None
             if name is not None:
-                smsg, button = await sync_to_async(GoogleDriveHelper().drive_list, name, True)
-                if smsg:
-                    smsg = 'File/Folder already available in Drive.\nHere are the search results:'
-                    await listener.onDownloadError(smsg, button)
+                telegraph_content, contents_no = await sync_to_async(GoogleDriveHelper().drive_list, name, True)
+                if telegraph_content:
+                    msg = f"File/Folder is already available in Drive.\nHere are {contents_no} list results:"
+                    button = await get_telegraph_list(telegraph_content)
+                    await listener.onDownloadError(msg, button)
                     await sync_to_async(api.remove, [download], force=True, files=True)
 
 
@@ -74,7 +75,8 @@ async def __onDownloadComplete(api, gid):
         if dl := await getDownloadByGid(new_gid):
             listener = dl.listener()
             if config_dict['BASE_URL'] and listener.select:
-                await sync_to_async(api.client.force_pause, new_gid)
+                if not dl.queued:
+                    await sync_to_async(api.client.force_pause, new_gid)
                 SBUTTONS = bt_selection_buttons(new_gid)
                 msg = "Your download paused. Choose files then press Done Selecting button to start downloading."
                 await sendMessage(listener.message, msg, SBUTTONS)
@@ -169,7 +171,7 @@ async def __onDownloadError(api, gid):
 
 
 def start_aria2_listener():
-    aria2.listen_to_notifications(threaded=True,
+    aria2.listen_to_notifications(threaded=False,
                                   on_download_start=__onDownloadStarted,
                                   on_download_error=__onDownloadError,
                                   on_download_stop=__onDownloadStopped,
